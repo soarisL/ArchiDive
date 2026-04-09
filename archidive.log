@@ -32,3 +32,10 @@
 [2026-04-09 19:44:55,436] INFO: Bounding Box: min=(np.float64(193.2476903416955), np.float64(-409.9232818255031), 0.0), max=(np.float64(197.4476903416954), np.float64(-405.7232818255032), 2.5)
 [2026-04-09 19:44:55,437] INFO: Câmera ajustada: zoom=-8.02, pan=(-195.35, 407.82), centro=(195.35, -407.82, 1.25)
 [2026-04-09 19:44:55,438] INFO: Ambiente 3D gerado: {'paredes': 80, 'poligonos': 20, 'area_paredes_m2': 132.0, 'area_piso_m2': np.float64(12.02), 'altura_parede_m': 2.5}
+[2026-04-09 20:01:54,393] INFO: Iniciando ArchiDive v1.0.1
+[2026-04-09 20:02:11,916] INFO: Arquivo carregado: C:/Users/luizs/OneDrive/Desktop/Projeto Lvis/Projeto antigo versão nova/ESCADA EM L - 05.09.dxf, escala=1.0
+[2026-04-09 20:02:11,917] INFO: Arquivo carregado: C:/Users/luizs/OneDrive/Desktop/Projeto Lvis/Projeto antigo versão nova/ESCADA EM L - 05.09.dxf
+[2026-04-09 20:02:15,861] INFO: Extraídos 20 polígonos do DXF, centro em (194.86, -407.24)
+[2026-04-09 20:02:15,875] INFO: Bounding Box: min=(np.float64(-1.6160000000001276), np.float64(-2.6840000000005944), 0.0), max=(np.float64(2.583999999999776), np.float64(1.5159999999993374), 2.5)
+[2026-04-09 20:02:15,876] INFO: Câmera ajustada: zoom=-8.02, pan=(-0.48, 0.58), centro=(0.48, -0.58, 1.25)
+[2026-04-09 20:02:15,877] INFO: Ambiente 3D gerado: {'paredes': 80, 'poligonos': 20, 'area_paredes_m2': 132.0, 'area_piso_m2': np.float64(12.02), 'altura_parede_m': 2.5}
