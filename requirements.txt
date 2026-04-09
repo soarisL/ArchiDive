@@ -1,0 +1,6 @@
+PyQt5>=5.15.0
+numpy>=1.21.0
+ezdxf>=1.0.0
+pygltflib>=1.15.0
+PyOpenGL>=3.1.6
+PyOpenGL-accelerate>=3.1.6
