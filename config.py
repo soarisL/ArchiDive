@@ -113,7 +113,7 @@ MTL_CEILING_SHININESS = 1
 
 # ========== LOGGING ==========
 LOG_LEVEL = "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
-LOG_FORMAT = "[%\(asctime\)s] %\(levelname\)s: %\(message\)s"
+LOG_FORMAT = "[%(asctime)s] %(levelname)s: %(message)s"
 LOG_FILE = "archidive.log"
 
 # ========== VERSÃO ==========

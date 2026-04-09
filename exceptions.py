@@ -46,3 +46,7 @@ class VisualizerError(ArchidiveException):
 class OpenGLError(VisualizerError):
     """Erro relacionado a OpenGL."""
     pass
+
+class NoGeometryError(ArchidiveException):
+    """Nenhuma geometria gerada para exportar."""
+    pass

@@ -4,6 +4,9 @@ Interface gráfica profissional com tema escuro, visualizador 3D OpenGL e painel
 """
 
 import os
+import logging
+from typing import List, Optional
+
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFileDialog, QMessageBox, QDoubleSpinBox,
@@ -21,32 +24,15 @@ try:
 except ImportError:
     OPENGL_AVAILABLE = False
 
-# -----------------------------------------------------------------------
-# Paleta de cores ArchiDive
-# -----------------------------------------------------------------------
-COLORS = {
-    "bg_dark":        "#0D0F14",
-    "bg_panel":       "#13161C",
-    "bg_card":        "#1A1E27",
-    "bg_input":       "#1E2330",
-    "accent":         "#00D4FF",
-    "accent_dim":     "#0099BB",
-    "accent_glow":    "#00D4FF44",
-    "success":        "#00E5A0",
-    "warning":        "#FFB800",
-    "danger":         "#FF4D6A",
-    "text_primary":   "#F0F4FF",
-    "text_secondary": "#8892A4",
-    "text_muted":     "#4A5568",
-    "border":         "#252A36",
-    "border_active":  "#00D4FF55",
-    "wall_color":     (0.72, 0.78, 0.88),
-    "floor_color":    (0.42, 0.52, 0.62),
-    "ceiling_color":  (0.85, 0.87, 0.92),
-    "outline_color":  (0.0, 0.83, 1.0),
-    "grid_color":     (0.15, 0.18, 0.25),
-}
+from config import COLORS, APP_NAME, APP_VERSION
+from exceptions import NoGeometryError
+from backend import Backend
 
+logger = logging.getLogger(__name__)
+
+# -----------------------------------------------------------------------
+# Estilos (mesmos do original, apenas ajustados para novas cores)
+# -----------------------------------------------------------------------
 STYLE_MAIN = f"""
 QMainWindow, QWidget {{
     background-color: {COLORS['bg_dark']};
@@ -255,12 +241,12 @@ QPushButton:hover {{
 
 
 # -----------------------------------------------------------------------
-# Worker thread para processamento
+# Worker thread para processamento (com mensagens de progresso)
 # -----------------------------------------------------------------------
 class ProcessWorker(QThread):
-    finished = pyqtSignal(list, list, list, list, list, str)  # +1 lista para escadas
+    finished = pyqtSignal(list, list, list, list, list, str)
     error = pyqtSignal(str)
-    progress = pyqtSignal(int)
+    progress = pyqtSignal(int, str)  # (percentual, mensagem)
 
     def __init__(self, backend, gerar_escadas=False):
         super().__init__()
@@ -269,26 +255,30 @@ class ProcessWorker(QThread):
 
     def run(self):
         try:
-            self.progress.emit(20)
+            self.progress.emit(10, "Lendo DXF...")
             polygons = self.backend.extrair_paredes()
-            self.progress.emit(60)
+            self.progress.emit(40, f"Extraídos {len(polygons)} polígonos")
             if not polygons:
                 self.error.emit("Nenhum polígono fechado encontrado no arquivo DXF.\n\nVerifique se o arquivo contém LWPOLYLINE ou POLYLINE fechadas.")
                 return
-            self.progress.emit(80)
-            walls, floors, ceilings, outlines, stairs = self.backend.criar_ambiente_3d(polygons, self.gerar_escadas)
-            self.progress.emit(100)
+            self.progress.emit(60, "Gerando geometria 3D...")
+            walls, floors, ceilings, outlines, stairs = self.backend.criar_ambiente_3d(
+                polygons, self.gerar_escadas
+            )
+            self.progress.emit(100, "Concluído!")
             self.finished.emit(walls, floors, ceilings, outlines, stairs, f"{len(polygons)} polígonos processados")
         except Exception as exc:
+            logger.exception("Erro no worker de processamento")
             self.error.emit(str(exc))
 
 
 # -----------------------------------------------------------------------
-# Visualizador 3D OpenGL
+# Visualizador 3D OpenGL com VBOs e ajuste automático de câmera
 # -----------------------------------------------------------------------
 class Visualizador3D(QOpenGLWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, backend=None):
         super().__init__(parent)
+        self.backend = backend
         self.reset_state()
         self.setMinimumSize(500, 400)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -296,9 +286,19 @@ class Visualizador3D(QOpenGLWidget):
         self.show_ceilings = True
         self.show_outlines = True
         self.show_grid = True
+        self.show_stairs = True
         self.stairs = []
         self.obj_verts = []
         self.obj_faces = []
+        # VBOs
+        self.vbo_walls = None
+        self.vbo_floors = None
+        self.vbo_ceilings = None
+        self.vbo_stairs = None
+        self.vbo_outlines = None
+        self.vbo_obj = None
+        self._geometry_dirty = True  # flag para regenerar VBOs
+
         self._animate_intro = True
         self._intro_alpha = 0.0
         if OPENGL_AVAILABLE:
@@ -315,11 +315,40 @@ class Visualizador3D(QOpenGLWidget):
         self.pan_y = 0.0
         self.ultima_pos = QPoint()
         self._has_geometry = False
+        self._geometry_dirty = True
 
     def _tick_intro(self):
         if self._animate_intro:
             self._intro_alpha = min(1.0, self._intro_alpha + 0.02)
             self.update()
+
+    def fit_to_view(self, margin_factor: float = 1.5):
+        """Ajusta câmera para enquadrar toda a geometria, centralizando na grade."""
+        if not self._has_geometry or self.backend is None:
+            return
+        min_pt, max_pt = self.backend.get_bounding_box()
+        center = [(min_pt[i] + max_pt[i]) * 0.5 for i in range(3)]
+        # Calcula o tamanho da geometria
+        size_x = max_pt[0] - min_pt[0]
+        size_y = max_pt[1] - min_pt[1]
+        size_z = max_pt[2] - min_pt[2]
+        size = max(size_x, size_y, size_z, 0.01)
+        
+        # Campo de visão vertical padrão: 45 graus
+        fov_rad = 45.0 * 3.14159 / 180.0
+        # Distância necessária para que o objeto caiba na tela com margem
+        distance = (size * 0.5) / (0.5 * fov_rad) * margin_factor
+        # Garante uma distância mínima
+        distance = max(distance, 5.0)
+        self.zoom = -distance
+        # Centraliza o pan de modo que o centro da geometria fique na origem da câmera
+        self.pan_x = -center[0]
+        self.pan_y = -center[1]
+        # Reseta rotação para uma vista perspectiva agradável
+        self.rotacao_x = 30.0
+        self.rotacao_y = -45.0
+        self.update()
+        logger.info(f"Câmera ajustada: zoom={self.zoom:.2f}, pan=({self.pan_x:.2f}, {self.pan_y:.2f}), centro=({center[0]:.2f}, {center[1]:.2f}, {center[2]:.2f})")
 
     def initializeGL(self):
         if not OPENGL_AVAILABLE:
@@ -335,16 +364,81 @@ class Visualizador3D(QOpenGLWidget):
         glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
         glShadeModel(GL_SMOOTH)
 
-        # Luz principal (branca de cima)
+        # Luz principal
         glLightfv(GL_LIGHT0, GL_POSITION, [5.0, 10.0, 10.0, 1.0])
         glLightfv(GL_LIGHT0, GL_DIFFUSE, [0.85, 0.85, 0.90, 1.0])
         glLightfv(GL_LIGHT0, GL_AMBIENT, [0.25, 0.25, 0.30, 1.0])
         glLightfv(GL_LIGHT0, GL_SPECULAR, [0.3, 0.3, 0.3, 1.0])
-
-        # Luz de preenchimento (azulada)
+        # Luz secundária
         glLightfv(GL_LIGHT1, GL_POSITION, [-5.0, -2.0, 3.0, 1.0])
         glLightfv(GL_LIGHT1, GL_DIFFUSE, [0.1, 0.2, 0.35, 1.0])
         glLightfv(GL_LIGHT1, GL_AMBIENT, [0.0, 0.0, 0.0, 1.0])
+
+    def _generate_vbos(self):
+        """Gera VBOs para geometria estática (paredes, piso, teto, escadas, outlines)."""
+        if not OPENGL_AVAILABLE:
+            return
+        # Limpa VBOs antigos
+        for vbo in [self.vbo_walls, self.vbo_floors, self.vbo_ceilings, self.vbo_stairs, self.vbo_outlines]:
+            if vbo is not None:
+                glDeleteBuffers(1, [vbo])
+        self.vbo_walls = self.vbo_floors = self.vbo_ceilings = self.vbo_stairs = self.vbo_outlines = None
+
+        # Paredes (quads → triângulos)
+        if self.walls:
+            verts = []
+            for wall in self.walls:
+                # Triangulação do quad: (0,1,2) e (0,2,3)
+                v0, v1, v2, v3 = wall
+                verts.extend(v0 + v1 + v2)
+                verts.extend(v0 + v2 + v3)
+            arr = (GLfloat * len(verts))(*verts)
+            self.vbo_walls = glGenBuffers(1)
+            glBindBuffer(GL_ARRAY_BUFFER, self.vbo_walls)
+            glBufferData(GL_ARRAY_BUFFER, len(verts) * 4, arr, GL_STATIC_DRAW)
+            glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+        # Piso (triângulos)
+        if self.floors and self.floors[0]:
+            verts = []
+            floor_pts = self.floors[0]
+            for i in range(1, len(floor_pts)-1):
+                verts.extend(floor_pts[0] + floor_pts[i] + floor_pts[i+1])
+            arr = (GLfloat * len(verts))(*verts)
+            self.vbo_floors = glGenBuffers(1)
+            glBindBuffer(GL_ARRAY_BUFFER, self.vbo_floors)
+            glBufferData(GL_ARRAY_BUFFER, len(verts) * 4, arr, GL_STATIC_DRAW)
+            glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+        # Teto
+        if self.ceilings and self.ceilings[0]:
+            verts = []
+            ceil_pts = self.ceilings[0]
+            for i in range(1, len(ceil_pts)-1):
+                verts.extend(ceil_pts[0] + ceil_pts[i] + ceil_pts[i+1])
+            arr = (GLfloat * len(verts))(*verts)
+            self.vbo_ceilings = glGenBuffers(1)
+            glBindBuffer(GL_ARRAY_BUFFER, self.vbo_ceilings)
+            glBufferData(GL_ARRAY_BUFFER, len(verts) * 4, arr, GL_STATIC_DRAW)
+            glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+        # Escadas
+        if self.stairs:
+            verts = []
+            for step in self.stairs:
+                v0, v1, v2, v3 = step
+                verts.extend(v0 + v1 + v2)
+                verts.extend(v0 + v2 + v3)
+            arr = (GLfloat * len(verts))(*verts)
+            self.vbo_stairs = glGenBuffers(1)
+            glBindBuffer(GL_ARRAY_BUFFER, self.vbo_stairs)
+            glBufferData(GL_ARRAY_BUFFER, len(verts) * 4, arr, GL_STATIC_DRAW)
+            glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+        # Outlines (arestas) - line loops, não VBO por simplicidade
+        # Mantém desenho imediato
+
+        self._geometry_dirty = False
 
     def paintGL(self):
         if not OPENGL_AVAILABLE:
@@ -364,34 +458,62 @@ class Visualizador3D(QOpenGLWidget):
 
         alpha = self._intro_alpha if self._animate_intro else 1.0
 
-        # Paredes
-        c = COLORS['wall_color']
-        glColor4f(c[0], c[1], c[2], alpha)
-        for wall in self.walls:
-            glBegin(GL_QUADS)
-            normal = self._compute_quad_normal(wall)
-            glNormal3fv(normal)
-            for v in wall:
-                glVertex3fv(v)
-            glEnd()
+        # Regenera VBOs se necessário
+        if self._geometry_dirty:
+            self._generate_vbos()
+
+        # Desenha paredes com VBO
+        if self.vbo_walls is not None:
+            c = COLORS['wall_color']
+            glColor4f(c[0], c[1], c[2], alpha)
+            glEnableClientState(GL_VERTEX_ARRAY)
+            glBindBuffer(GL_ARRAY_BUFFER, self.vbo_walls)
+            glVertexPointer(3, GL_FLOAT, 0, None)
+            # número de triângulos = (número de vértices / 3)
+            num_verts = self._get_vbo_size(self.vbo_walls) // (3 * 4)  # bytes por float
+            glDrawArrays(GL_TRIANGLES, 0, num_verts)
+            glBindBuffer(GL_ARRAY_BUFFER, 0)
+            glDisableClientState(GL_VERTEX_ARRAY)
 
         # Piso
-        if self.show_floors:
+        if self.show_floors and self.vbo_floors is not None:
             glDisable(GL_LIGHTING)
             c = COLORS['floor_color']
             glColor4f(c[0], c[1], c[2], alpha * 0.85)
-            for floor in self.floors:
-                self._draw_polygon_fan(floor)
+            glEnableClientState(GL_VERTEX_ARRAY)
+            glBindBuffer(GL_ARRAY_BUFFER, self.vbo_floors)
+            glVertexPointer(3, GL_FLOAT, 0, None)
+            num_verts = self._get_vbo_size(self.vbo_floors) // (3 * 4)
+            glDrawArrays(GL_TRIANGLES, 0, num_verts)
+            glBindBuffer(GL_ARRAY_BUFFER, 0)
+            glDisableClientState(GL_VERTEX_ARRAY)
             glEnable(GL_LIGHTING)
 
         # Teto
-        if self.show_ceilings:
+        if self.show_ceilings and self.vbo_ceilings is not None:
             c = COLORS['ceiling_color']
             glColor4f(c[0], c[1], c[2], alpha * 0.4)
-            for ceiling in self.ceilings:
-                self._draw_polygon_fan(ceiling)
+            glEnableClientState(GL_VERTEX_ARRAY)
+            glBindBuffer(GL_ARRAY_BUFFER, self.vbo_ceilings)
+            glVertexPointer(3, GL_FLOAT, 0, None)
+            num_verts = self._get_vbo_size(self.vbo_ceilings) // (3 * 4)
+            glDrawArrays(GL_TRIANGLES, 0, num_verts)
+            glBindBuffer(GL_ARRAY_BUFFER, 0)
+            glDisableClientState(GL_VERTEX_ARRAY)
 
-        # Contornos (wireframe das arestas)
+        # Escadas
+        if self.show_stairs and self.vbo_stairs is not None:
+            c = COLORS['stair_color']
+            glColor4f(c[0], c[1], c[2], alpha)
+            glEnableClientState(GL_VERTEX_ARRAY)
+            glBindBuffer(GL_ARRAY_BUFFER, self.vbo_stairs)
+            glVertexPointer(3, GL_FLOAT, 0, None)
+            num_verts = self._get_vbo_size(self.vbo_stairs) // (3 * 4)
+            glDrawArrays(GL_TRIANGLES, 0, num_verts)
+            glBindBuffer(GL_ARRAY_BUFFER, 0)
+            glDisableClientState(GL_VERTEX_ARRAY)
+
+        # Contornos (wireframe)
         if self.show_outlines:
             glDisable(GL_LIGHTING)
             glLineWidth(1.2)
@@ -404,15 +526,7 @@ class Visualizador3D(QOpenGLWidget):
                 glEnd()
             glEnable(GL_LIGHTING)
 
-                # Escadas (Ciano)
-        c = (0.0, 0.83, 0.95)
-        glColor4f(c[0], c[1], c[2], alpha)
-        for step in self.stairs:
-            glBegin(GL_QUADS)
-            for v in step: glVertex3fv(v)
-            glEnd()
-
-        # OBJ Carregado (Laranja, sem iluminação para destacar)
+        # OBJ carregado
         if self.obj_verts and self.obj_faces:
             glDisable(GL_LIGHTING)
             glColor4f(1.0, 0.6, 0.2, alpha)
@@ -424,36 +538,12 @@ class Visualizador3D(QOpenGLWidget):
             glEnd()
             glEnable(GL_LIGHTING)
 
-    def _compute_quad_normal(self, quad):
-        v0 = [quad[1][i] - quad[0][i] for i in range(3)]
-        v1 = [quad[3][i] - quad[0][i] for i in range(3)]
-        n = [
-            v0[1]*v1[2] - v0[2]*v1[1],
-            v0[2]*v1[0] - v0[0]*v1[2],
-            v0[0]*v1[1] - v0[1]*v1[0],
-        ]
-        length = (n[0]**2 + n[1]**2 + n[2]**2) ** 0.5
-        if length > 0:
-            n = [x / length for x in n]
-        return n
-
-    def _draw_polygon_fan(self, polygon):
-        pts = polygon[:-1] if len(polygon) > 3 and polygon[0] == polygon[-1] else polygon
-        if len(pts) < 3:
-            return
-        cx = sum(p[0] for p in pts) / len(pts)
-        cy = sum(p[1] for p in pts) / len(pts)
-        cz = pts[0][2] if len(pts[0]) > 2 else 0.0
-        glBegin(GL_TRIANGLE_FAN)
-        glVertex3f(cx, cy, cz)
-        for p in pts:
-            if len(p) == 3:
-                glVertex3fv(p)
-            else:
-                glVertex3f(p[0], p[1], cz)
-        p0 = pts[0]
-        glVertex3f(p0[0], p0[1], cz) if len(p0) < 3 else glVertex3fv(p0)
-        glEnd()
+    def _get_vbo_size(self, vbo_id):
+        """Retorna o tamanho em bytes do buffer VBO."""
+        glBindBuffer(GL_ARRAY_BUFFER, vbo_id)
+        size = glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+        return size
 
     def _draw_grid(self):
         glDisable(GL_LIGHTING)
@@ -469,7 +559,7 @@ class Visualizador3D(QOpenGLWidget):
             glVertex3f(-size, i, 0)
             glVertex3f(size, i, 0)
         glEnd()
-        # Eixos X/Y
+        # Eixos
         glLineWidth(2.0)
         glColor4f(1.0, 0.3, 0.3, 0.7)
         glBegin(GL_LINES); glVertex3f(0,0,0); glVertex3f(3,0,0); glEnd()
@@ -483,7 +573,6 @@ class Visualizador3D(QOpenGLWidget):
         glDisable(GL_LIGHTING)
         glColor4f(0.2, 0.5, 0.7, 0.3)
         glLineWidth(1.5)
-        # Cubo wireframe placeholder
         pts = [
             (-2,-2,0),(2,-2,0),(2,2,0),(-2,2,0),
             (-2,-2,3),(2,-2,3),(2,2,3),(-2,2,3),
@@ -531,9 +620,12 @@ class Visualizador3D(QOpenGLWidget):
         self.obj_verts = obj_verts or []
         self.obj_faces = obj_faces or []
         self._has_geometry = True
+        self._geometry_dirty = True
         self._animate_intro = True
         self._intro_alpha = 0.0
         self.update()
+        # Ajusta a câmera automaticamente para centralizar e escalar o modelo
+        self.fit_to_view()
 
     def reset_camera(self):
         self.rotacao_x = 30.0
@@ -559,7 +651,7 @@ class Visualizador3D(QOpenGLWidget):
 
 
 # -----------------------------------------------------------------------
-# Card de estatística
+# Card de estatística (mesmo do original)
 # -----------------------------------------------------------------------
 class StatCard(QFrame):
     def __init__(self, label: str, value: str = "—", unit: str = "", parent=None):
@@ -614,7 +706,7 @@ class MainWindow(QMainWindow):
         self._setup_statusbar()
 
     def _setup_window(self):
-        self.setWindowTitle("ArchiDive  —  Planta Baixa para 3D / VR")
+        self.setWindowTitle(f"{APP_NAME} — Planta Baixa para 3D / VR")
         self.setMinimumSize(1100, 720)
         self.resize(1300, 800)
         self.setStyleSheet(STYLE_MAIN + STYLE_PANEL)
@@ -681,7 +773,6 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(logo_lbl)
         sidebar_layout.addWidget(tagline)
 
-        # Separador
         sep = QFrame(); sep.setFrameShape(QFrame.HLine)
         sep.setStyleSheet(f"color: {COLORS['border']}; margin: 4px 0;")
         sidebar_layout.addWidget(sep)
@@ -733,15 +824,18 @@ class MainWindow(QMainWindow):
         self.cb_ceilings = QCheckBox("Exibir Teto")
         self.cb_outlines = QCheckBox("Exibir Contornos")
         self.cb_grid = QCheckBox("Exibir Grade")
-        self.cb_stairs = QCheckBox("Detectar Escadas (Híbrido)")
-        self.cb_stairs.setChecked(True)
-        for cb in [self.cb_floors, self.cb_ceilings, self.cb_outlines, self.cb_grid]:
+        self.cb_stairs_visibility = QCheckBox("Exibir Escadas")
+        self.cb_stairs_detection = QCheckBox("Detectar Escadas (Híbrido)")
+        self.cb_stairs_detection.setChecked(True)
+        for cb in [self.cb_floors, self.cb_ceilings, self.cb_outlines, self.cb_grid, self.cb_stairs_visibility]:
             cb.setChecked(True)
             cb.stateChanged.connect(self._update_visibility)
         grp_layers_layout.addWidget(self.cb_floors)
         grp_layers_layout.addWidget(self.cb_ceilings)
         grp_layers_layout.addWidget(self.cb_outlines)
         grp_layers_layout.addWidget(self.cb_grid)
+        grp_layers_layout.addWidget(self.cb_stairs_visibility)
+        grp_layers_layout.addWidget(self.cb_stairs_detection)
         sidebar_layout.addWidget(grp_layers)
 
         # --- Ações principais ---
@@ -757,6 +851,10 @@ class MainWindow(QMainWindow):
         self.progress.setValue(0)
         self.progress.setVisible(False)
         self.progress.setFixedHeight(6)
+        self.progress_label = QLabel("")
+        self.progress_label.setVisible(False)
+        self.progress_label.setStyleSheet(f"font-size: 10px; color: {COLORS['text_muted']};")
+        sidebar_layout.addWidget(self.progress_label)
         sidebar_layout.addWidget(self.progress)
 
         # Exportar
@@ -848,7 +946,7 @@ class MainWindow(QMainWindow):
 
         # Visualizador 3D
         if OPENGL_AVAILABLE:
-            self.visualizador = Visualizador3D()
+            self.visualizador = Visualizador3D(backend=self.backend)
         else:
             self.visualizador = QLabel("OpenGL não disponível.\nInstale PyOpenGL para visualização 3D.")
             self.visualizador.setAlignment(Qt.AlignCenter)
@@ -886,6 +984,7 @@ class MainWindow(QMainWindow):
             self.lbl_filename.setText(os.path.basename(path))
             self.lbl_filename.setStyleSheet(f"font-size: 11px; color: {COLORS['accent']};")
             self.status.showMessage(f"Arquivo carregado: {os.path.basename(path)}")
+            logger.info(f"Arquivo carregado: {path}")
         else:
             QMessageBox.critical(self, "Erro ao Abrir", msg)
             self.status.showMessage("Erro ao carregar arquivo.")
@@ -898,23 +997,31 @@ class MainWindow(QMainWindow):
         self.backend.altura_parede = self.spin_height.value()
         self.btn_generate.setEnabled(False)
         self.progress.setVisible(True)
+        self.progress_label.setVisible(True)
         self.progress.setValue(0)
+        self.progress_label.setText("Iniciando...")
         self.status.showMessage("Processando geometria…")
 
-        self._worker = ProcessWorker(self.backend, gerar_escadas=self.cb_stairs.isChecked())
-        self._worker.progress.connect(self.progress.setValue)
+        self._worker = ProcessWorker(self.backend, gerar_escadas=self.cb_stairs_detection.isChecked())
+        self._worker.progress.connect(self._on_progress)
         self._worker.finished.connect(self._on_generate_done)
         self._worker.error.connect(self._on_generate_error)
         self._worker.start()
 
+    def _on_progress(self, percent, msg):
+        self.progress.setValue(percent)
+        self.progress_label.setText(msg)
+
     def _on_generate_done(self, walls, floors, ceilings, outlines, stairs, msg):
         self.btn_generate.setEnabled(True)
         self.progress.setVisible(False)
+        self.progress_label.setVisible(False)
         if OPENGL_AVAILABLE:
             self.visualizador.show_floors = self.cb_floors.isChecked()
             self.visualizador.show_ceilings = self.cb_ceilings.isChecked()
             self.visualizador.show_outlines = self.cb_outlines.isChecked()
             self.visualizador.show_grid = self.cb_grid.isChecked()
+            self.visualizador.show_stairs = self.cb_stairs_visibility.isChecked()
             self.visualizador.load_geometry(walls, floors, ceilings, outlines, stairs)
 
         self.btn_export_obj.setEnabled(True)
@@ -927,15 +1034,17 @@ class MainWindow(QMainWindow):
         self.stat_floor_area.update_value(str(stats["area_piso_m2"]), "m²")
 
         self.status.showMessage(f"✓ Ambiente 3D gerado — {msg}")
+        logger.info(f"Ambiente 3D gerado: {stats}")
 
     def _on_generate_error(self, msg):
         self.btn_generate.setEnabled(True)
         self.progress.setVisible(False)
+        self.progress_label.setVisible(False)
         QMessageBox.warning(self, "Aviso de Processamento", msg)
         self.status.showMessage("Processamento finalizado com avisos.")
 
     def _exportar_obj(self):
-        if not self.backend.walls:
+        if not self.backend.walls and not self.backend.floors and not self.backend.stairs:
             QMessageBox.warning(self, "Sem geometria", "Gere o ambiente 3D antes de exportar.")
             return
         path, _ = QFileDialog.getSaveFileName(
@@ -945,15 +1054,19 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            self.backend.export_as_obj(path, self.backend.walls, self.backend.floors, self.backend.ceilings)
+            self.backend.export_as_obj(path)
             QMessageBox.information(self, "Exportação Concluída",
                 f"Modelo OBJ exportado com sucesso!\n\n{path}\n\nUm arquivo .mtl com materiais foi gerado no mesmo diretório.")
             self.status.showMessage(f"OBJ exportado: {os.path.basename(path)}")
+            logger.info(f"OBJ exportado: {path}")
+        except NoGeometryError as e:
+            QMessageBox.warning(self, "Sem geometria", str(e))
         except Exception as exc:
+            logger.exception("Erro na exportação OBJ")
             QMessageBox.critical(self, "Erro de Exportação", str(exc))
 
     def _exportar_gltf(self):
-        if not self.backend.walls:
+        if not self.backend.walls and not self.backend.floors and not self.backend.stairs:
             QMessageBox.warning(self, "Sem geometria", "Gere o ambiente 3D antes de exportar.")
             return
         path, _ = QFileDialog.getSaveFileName(
@@ -967,7 +1080,11 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Exportação Concluída",
                 f"Modelo glTF exportado!\n\n{path}\n\nCompatível com motores VR (Unity, Unreal, A-Frame, Blender).")
             self.status.showMessage(f"glTF exportado: {os.path.basename(path)}")
+            logger.info(f"glTF exportado: {path}")
+        except NoGeometryError as e:
+            QMessageBox.warning(self, "Sem geometria", str(e))
         except Exception as exc:
+            logger.exception("Erro na exportação glTF")
             QMessageBox.critical(self, "Erro de Exportação", f"Erro ao exportar glTF:\n{exc}")
 
     def _update_visibility(self):
@@ -976,6 +1093,7 @@ class MainWindow(QMainWindow):
             self.visualizador.show_ceilings = self.cb_ceilings.isChecked()
             self.visualizador.show_outlines = self.cb_outlines.isChecked()
             self.visualizador.show_grid = self.cb_grid.isChecked()
+            self.visualizador.show_stairs = self.cb_stairs_visibility.isChecked()
             self.visualizador.update()
 
     def _reset_scene(self):
@@ -986,15 +1104,18 @@ class MainWindow(QMainWindow):
             if OPENGL_AVAILABLE:
                 self.visualizador.reset_state()
                 self.visualizador.update()
+                self.visualizador.fit_to_view()   # re-centraliza (mostrará apenas grade)
             self.backend.walls = []
             self.backend.floors = []
             self.backend.ceilings = []
             self.backend.outlines = []
+            self.backend.stairs = []
             self.btn_export_obj.setEnabled(False)
             self.btn_export_gltf.setEnabled(False)
             for s in [self.stat_polygons, self.stat_walls, self.stat_wall_area, self.stat_floor_area]:
                 s.update_value("—")
             self.status.showMessage("Cena limpa.")
+            logger.info("Cena limpa pelo usuário")
 
     def _view_persp(self):
         if OPENGL_AVAILABLE and hasattr(self.visualizador, 'reset_camera'):
@@ -1010,29 +1131,33 @@ class MainWindow(QMainWindow):
 
     def _show_about(self):
         QMessageBox.about(self, "Sobre ArchiDive",
-            "<h2 style='color:#00D4FF'>ArchiDive v1.0</h2>"
+            f"<h2 style='color:#00D4FF'>ArchiDive v{APP_VERSION}</h2>"
             "<p>Conversor profissional de plantas baixas DXF para ambientes 3D e VR.</p>"
             "<p><b>Funcionalidades:</b><br>"
             "• Leitura de arquivos .DXF (AutoCAD, LibreCAD, etc.)<br>"
             "• Geração automática de paredes, piso e teto<br>"
+            "• Detecção e visualização de escadas<br>"
             "• Visualizador 3D interativo com iluminação<br>"
             "• Exportação OBJ (com materiais .mtl)<br>"
             "• Exportação glTF 2.0 (Unity, Unreal, A-Frame, Blender)</p>"
             "<p style='color:#8892A4'>Desenvolvido com Python, PyQt5 e OpenGL.</p>"
         )
+
     def _carregar_obj(self):
         path, _ = QFileDialog.getOpenFileName(self, "Carregar OBJ para Visualização", "", "Wavefront OBJ (*.obj)")
-        if not path: return
+        if not path:
+            return
         try:
             verts, faces = self.backend.carregar_obj(path)
             if not verts:
                 QMessageBox.warning(self, "Arquivo Vazio", "O OBJ não contém vértices válidos.")
                 return
-            # Mantém geometria atual, só sobrepõe o OBJ
             if OPENGL_AVAILABLE:
                 self.visualizador.obj_verts = verts
                 self.visualizador.obj_faces = faces
                 self.visualizador.update()
             self.status.showMessage(f"OBJ carregado: {os.path.basename(path)} ({len(verts)} vértices)")
+            logger.info(f"OBJ carregado: {path} com {len(verts)} vértices")
         except Exception as exc:
+            logger.exception("Erro ao carregar OBJ")
             QMessageBox.critical(self, "Erro ao Carregar OBJ", str(exc))

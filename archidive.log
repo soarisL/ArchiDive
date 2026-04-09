@@ -1,0 +1,34 @@
+[2026-04-09 18:50:19,070] INFO: Iniciando ArchiDive v1.0.1
+[2026-04-09 18:50:45,367] INFO: Arquivo carregado: C:/Users/luizs/OneDrive/Desktop/Projeto Lvis/Projeto antigo versão nova/ESCADA EM L - 05.09.dxf, escala=1.0
+[2026-04-09 18:50:45,368] INFO: Arquivo carregado: C:/Users/luizs/OneDrive/Desktop/Projeto Lvis/Projeto antigo versão nova/ESCADA EM L - 05.09.dxf
+[2026-04-09 18:50:50,716] INFO: Extraídos 20 polígonos do DXF
+[2026-04-09 18:50:50,730] INFO: Ambiente 3D gerado: {'paredes': 80, 'poligonos': 20, 'area_paredes_m2': 132.0, 'area_piso_m2': np.float64(12.02), 'altura_parede_m': 2.5}
+[2026-04-09 18:50:54,169] INFO: Extraídos 20 polígonos do DXF
+[2026-04-09 18:50:54,173] INFO: Ambiente 3D gerado: {'paredes': 80, 'poligonos': 20, 'area_paredes_m2': 132.0, 'area_piso_m2': np.float64(12.02), 'altura_parede_m': 2.5}
+[2026-04-09 18:50:54,703] INFO: Extraídos 20 polígonos do DXF
+[2026-04-09 18:50:54,711] INFO: Ambiente 3D gerado: {'paredes': 80, 'poligonos': 20, 'area_paredes_m2': 132.0, 'area_piso_m2': np.float64(12.02), 'altura_parede_m': 2.5}
+[2026-04-09 18:52:42,093] INFO: Cena limpa pelo usuário
+[2026-04-09 19:07:09,838] INFO: Iniciando ArchiDive v1.0.1
+[2026-04-09 19:07:21,608] INFO: OBJ carregado: C:/Users/luizs/Downloads/archidive_export.obj com 86 vértices
+[2026-04-09 19:07:28,425] INFO: Cena limpa pelo usuário
+[2026-04-09 19:07:33,408] INFO: OBJ carregado: C:/Users/luizs/Downloads/archidive_export.obj com 86 vértices
+[2026-04-09 19:07:59,548] INFO: Arquivo carregado: C:/Users/luizs/OneDrive/Desktop/Projeto Lvis/Projeto antigo versão nova/ESCADA EM L - 05.09.dxf, escala=1.0
+[2026-04-09 19:07:59,548] INFO: Arquivo carregado: C:/Users/luizs/OneDrive/Desktop/Projeto Lvis/Projeto antigo versão nova/ESCADA EM L - 05.09.dxf
+[2026-04-09 19:08:09,966] INFO: Extraídos 20 polígonos do DXF
+[2026-04-09 19:08:09,981] INFO: Câmera ajustada: zoom=-6.42, pan=(-195.35, 407.82)
+[2026-04-09 19:08:09,982] INFO: Ambiente 3D gerado: {'paredes': 80, 'poligonos': 20, 'area_paredes_m2': 158.4, 'area_piso_m2': np.float64(12.02), 'altura_parede_m': 3.0}
+[2026-04-09 19:13:49,126] INFO: Iniciando ArchiDive v1.0.1
+[2026-04-09 19:14:01,907] INFO: OBJ carregado: C:/Users/luizs/Downloads/archidive_export.obj com 86 vértices
+[2026-04-09 19:14:28,196] INFO: Arquivo carregado: C:/Users/luizs/OneDrive/Desktop/Projeto Lvis/Projeto antigo versão nova/ESCADA EM L - 05.09.dxf, escala=1.0
+[2026-04-09 19:14:28,197] INFO: Arquivo carregado: C:/Users/luizs/OneDrive/Desktop/Projeto Lvis/Projeto antigo versão nova/ESCADA EM L - 05.09.dxf
+[2026-04-09 19:14:30,516] INFO: Extraídos 20 polígonos do DXF
+[2026-04-09 19:14:30,535] INFO: Bounding Box: min=(np.float64(193.2476903416955), np.float64(-409.9232818255031), 0.0), max=(np.float64(197.4476903416954), np.float64(-405.7232818255032), 2.5)
+[2026-04-09 19:14:30,535] INFO: Câmera ajustada: zoom=-8.02, pan=(-195.35, 407.82), centro=(195.35, -407.82, 1.25)
+[2026-04-09 19:14:30,536] INFO: Ambiente 3D gerado: {'paredes': 80, 'poligonos': 20, 'area_paredes_m2': 132.0, 'area_piso_m2': np.float64(12.02), 'altura_parede_m': 2.5}
+[2026-04-09 19:44:40,851] INFO: Iniciando ArchiDive v1.0.1
+[2026-04-09 19:44:52,577] INFO: Arquivo carregado: C:/Users/luizs/OneDrive/Desktop/Projeto Lvis/Projeto antigo versão nova/ESCADA EM L - 05.09.dxf, escala=1.0
+[2026-04-09 19:44:52,577] INFO: Arquivo carregado: C:/Users/luizs/OneDrive/Desktop/Projeto Lvis/Projeto antigo versão nova/ESCADA EM L - 05.09.dxf
+[2026-04-09 19:44:55,421] INFO: Extraídos 20 polígonos do DXF
+[2026-04-09 19:44:55,436] INFO: Bounding Box: min=(np.float64(193.2476903416955), np.float64(-409.9232818255031), 0.0), max=(np.float64(197.4476903416954), np.float64(-405.7232818255032), 2.5)
+[2026-04-09 19:44:55,437] INFO: Câmera ajustada: zoom=-8.02, pan=(-195.35, 407.82), centro=(195.35, -407.82, 1.25)
+[2026-04-09 19:44:55,438] INFO: Ambiente 3D gerado: {'paredes': 80, 'poligonos': 20, 'area_paredes_m2': 132.0, 'area_piso_m2': np.float64(12.02), 'altura_parede_m': 2.5}
